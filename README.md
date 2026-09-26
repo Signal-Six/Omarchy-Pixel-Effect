@@ -1,10 +1,7 @@
 # Omarchy Pixel Effect
 
-The **SUPER+SPACE menu pixel wipe** and the **omakase-pixel** palette theme for
-[Omarchy](https://omarchy.org/) — the Arch/Hyprland distro. This is the part of
-the `omakase-pixel` build that lives in your live session: the animated menu
-reveal and the muted-blue pixel palette. It is isolated from the SDDM/plymouth
-greeter work so it can be installed and iterated on its own.
+This plugin adds a **SUPER+SPACE menu pixel wipe** and the **omakase-pixel** palette theme for
+[Omarchy](https://omarchy.org/) — the Arch/Hyprland distro.
 
 Open the menu with **SUPER + SPACE**: instead of a plain fade, the card emerges
 from behind a leading row of shimmering pixels that rolls top-to-bottom over
@@ -18,6 +15,8 @@ This repo ships exactly two things, and nothing else:
 | `omakase-pixel/`       | The **palette theme** — `colors.toml` (25-key source of truth), the derived 6-color `pixel_palette.toml` the FX read, `shell.lock.toml` (hyprlock colors), `icons.theme`, a 4K wallpaper, and previews. |
 | `omakase-pixel.menu/`  | The **SUPER+SPACE menu plugin** (a Quickshell `menu` + `bar-widget`) with the pixel wipe and the app-list fallback. |
 
+The Pixel Fade effect works on any theme but it was specifically built around the color palette of the included omakase-pixel theme.
+
 ---
 
 ## Requirements
@@ -29,8 +28,6 @@ This repo ships exactly two things, and nothing else:
 
 Everything this installs lives under your `$HOME` — **no `sudo`, nothing written
 outside `~/.config/omarchy/`**.
-
-[XDG]: https://specifications.freedesktop.org/basedir-spec/latest/
 
 ---
 
@@ -108,13 +105,11 @@ Key `colors.toml` values: `background #212429` · `darker_background #111315` ·
 
 A fork of the stock `omarchy.menu` plugin with two additions:
 
-- **The pixel wipe.** The stock netrunner sweep is a gradient shine; this replaces
-  it with a wipe in the same pixel language as the login screen. A `Canvas` (z above
+- **The pixel wipe.** A `Canvas` (z above
   the card contents, clipped to the card's rounded corners) covers the lower part of
   the card with the card background plus faint noise specks, and a leading row of
   shimmering lit cells rolls top→bottom over ~620 ms (OutCubic) with two twinkling
-  "tail" rows above it — the same value-noise family as `pixel-field.js` on the
-  omarchy.org hero banner. The panel waits for `rowsLoaded` before appearing, so the
+  "tail" rows above it. The panel waits for `rowsLoaded` before appearing, so the
   wipe **leads** the content instead of revealing an empty card.
   - Opt out of motion: set `reduced: true` on the `pixelWipe` `Canvas` in `Menu.qml`
     and the card appears instantly. (It is deliberately *not* wired to
@@ -130,12 +125,11 @@ A fork of the stock `omarchy.menu` plugin with two additions:
   source of truth for the real command.
   - **Icon resolution** follows your *active* icon theme through its `index.theme`
     `Inherits=` chain, then `hicolor`/`Adwaita`; scalable SVGs are preferred, then
-    128/48/32/24 px PNGs. Apps with genuinely missing icon files render iconless —
-    never broken.
+    128/48/32/24 px PNGs. Apps with genuinely missing icon files may render iconless but are never broken.
 
 ### Why the fallback exists (the two bugs it fixes)
 
-The older netrunner-based menu carried a custom SUPER+SPACE menu that relied
+Other theme plugins (this idea was heavily inspired by [Pierre-Aoki's Netrunner](https://github.com/Pierre-Aoki/omarchy-netrunner-theme) theme plugin) carried a custom SUPER+SPACE menu that relied
 solely on `shell.appLibrary`. On 4.0.4+ that broke in two ways:
 
 1. **Missing app list** — no `appLibrary` means no rows at all.
@@ -173,13 +167,6 @@ Omarchy-Pixel-Effect/
     ├── MenuModel.js           #   JSONC parsing, search, guard batching
     └── BarWidget.qml          #   the bar's menu button
 ```
-
-> This working directory also contains the source for the **omarchy.org hero
-> `pixel-field.js`** web module and the theme/palette build scripts
-> (`make_palette.py`, `build_theme.py`, `index.html`, `src/`, `out/`). Those are
-> the *design* tools, not part of this installable bundle, and are intentionally
-> excluded from the published repo (see `.gitignore`).
-
 ---
 
 ## Customizing

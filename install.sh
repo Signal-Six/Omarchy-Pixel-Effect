@@ -106,6 +106,10 @@ install_plugin() {
 
   mkdir -p "$PLUGINS_DIR"
 
+  # A re-run on an already-installed tree must not displace its own copy
+  # (that would orphan the live plugin under a timestamped name).
+  [ -f "$PLUGIN_DST/.installed-by-omarchy-pixel-effect" ] && rm -rf "$PLUGIN_DST"
+
   # Back up a displaced plugin (same id) so --uninstall can put it back.
   if [ -e "$PLUGIN_DST" ]; then
     local displaced="$PLUGIN_DST.displaced.$(date +%s)"
@@ -119,9 +123,16 @@ install_plugin() {
 
   [ -f "$SHELL_JSON" ] || die "shell.json not found at $SHELL_JSON"
 
-  # Snapshot the current shell.json so --uninstall is a clean revert.
-  cp -a "$SHELL_JSON" "$SHELL_BACKUP"
-  say "backed up shell.json -> $(basename "$SHELL_BACKUP")"
+  # Snapshot the current shell.json so --uninstall is a clean revert. Only
+  # the FIRST install may write the backup: a re-run must not overwrite it
+  # with the already-patched file, or --uninstall would restore the patched
+  # state instead of the true original.
+  if [ -f "$SHELL_BACKUP" ]; then
+    say "keeping the original shell.json snapshot from the first install"
+  else
+    cp -a "$SHELL_JSON" "$SHELL_BACKUP"
+    say "backed up shell.json -> $(basename "$SHELL_BACKUP")"
+  fi
 
   # Point the bar's menu slot at the plugin and disable the first-party /
   # stock menu so it does not double-render.
@@ -143,9 +154,9 @@ install_plugin() {
             end
         end
     )
+    # (a fresh shell.json has no disabledPlugins key at all: start from [])
     | .disabledPlugins |= (
-        . as $d
-        | ($d + (["omarchy.menu", "hyperlayer.menu"] - $d))
+        ((. // []) + (["omarchy.menu", "hyperlayer.menu"] - (. // [])))
         | map(select(. != "omakase-pixel.menu"))
       )
   '

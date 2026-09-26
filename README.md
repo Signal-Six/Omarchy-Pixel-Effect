@@ -1,5 +1,7 @@
 # Omarchy Pixel Effect
 
+https://github.com/user-attachments/assets/dc08b0e3-058e-4394-b520-de8e56606a9b
+
 This plugin adds a **SUPER+SPACE menu pixel wipe** and the **omakase-pixel** palette theme for
 [Omarchy](https://omarchy.org/) — the Arch/Hyprland distro.
 

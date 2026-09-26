@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# Whitelist .gitignore.
+#
+# This working directory also holds the *design tooling* for the omakase-pixel
+# build — the omarchy.org hero `pixel-field.js` web module plus the theme/palette
+# build scripts (`make_palette.py`, `build_theme.py`, `index.html`, `src/`, `out/`,
+# `README.web-module.md`, ...). Only the installable SUPER+SPACE menu effect and
+# the omakase-pixel palette theme are published, so everything is ignored by
+# default and the bundle is explicitly re-included below.
+#
+# GITIGNORE TRAP: the re-include patterns for the two bundle *directories*
+# must be written WITHOUT a trailing slash. `/*` excludes the directory
+# entries themselves, and git refuses to descend into an excluded directory to
+# re-include its children — so `!/omakase-pixel/` (with the slash) is dead.
+# `!/omakase-pixel` re-includes the directory and lets git walk into it.
+# ---------------------------------------------------------------------------
+
+# Ignore everything at the repo root by default.
+/*
+
+# --- the publish list: root files -----------------------------------
+!/.gitignore
+!/install.sh
+!/README.md
+!/LICENSE
+
+# The palette theme (re-include the dir so its whole subtree is walked).
+!/omakase-pixel
+
+# The SUPER+SPACE menu plugin (same: re-include the dir, walk the subtree).
+!/omakase-pixel.menu
+
+# --- keep the tree clean regardless --------------------------------
+.DS_Store
+*.swp
+*~

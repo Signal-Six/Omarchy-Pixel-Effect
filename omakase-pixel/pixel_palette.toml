@@ -1,0 +1,11 @@
+# Omakase-Pixel: 6-color animated pixel-field ladder.
+# Derived from colors.toml (single source of truth).
+#   bg=darker_background  lit=accent  crest=bright_foreground
+#   dim/mid/hover are mix steps between them.
+
+bg = "#111315"
+dim = "#374e57"
+mid = "#4e7381"
+lit = "#6fa7bb"
+hover = "#abc7d3"
+crest = "#dce1e7"

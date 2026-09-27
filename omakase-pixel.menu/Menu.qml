@@ -107,9 +107,20 @@ Item {
   property int rowSpacing: Style.spacing.xs
   property int dividerHeight: Style.space(17)
   property bool searchDivider: false
-  property int layoutSerial: 0
+  // Running per-row heights (cumulative, before the fold) for the rows
+  // currently in the model. rebuildDisplay fills it while the rows are in
+  // hand; rowListHeight/dmenuRowListHeight read it instead of re-walking
+  // the model on every binding refresh.
+  property var rowTotals: []
   property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "style.font") ? Style.space(520) : Style.space(300)), panel.width - Style.gapsOut * 2)
-  property int visibleRowsHeight: root.dmenuActive ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText) : rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)
+  // Card height for the rows that fit. The height functions read root.rowTotals
+  // and displayModel.count from inside their own bodies, and those reads are
+  // what re-evaluate this binding: passing a property as an argument does NOT
+  // create a dependency (measured against quickshell 0.3.1 — only reads made
+  // during evaluation count, including reads inside a called function). Every
+  // rebuild path reassigns rowTotals, including the ones that only clear the
+  // model, so no separate generation counter is needed.
+  property int visibleRowsHeight: root.dmenuActive ? dmenuRowListHeight() : rowListHeight()
   property int cardHeight: root.dmenuActive
     ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
     : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
@@ -178,41 +189,22 @@ Item {
     return totals[full - 1] + root.rowSpacing + peek
   }
 
-  function rowListHeight(_serial, _count, _filter, _divider) {
+  // The totals were built in the same pass that filled the model (see
+  // rebuildDisplay / rebuildDmenuDisplay) — walking displayModel again per
+  // binding refresh doubled the per-keystroke work for nothing.
+  function rowListHeight() {
     if (displayModel.count === 0) return root.baseRowHeight
-
-    var totals = []
-    var total = 0
-    var previousSection = ""
-
-    for (var i = 0; i < displayModel.count; i++) {
-      var row = displayModel.get(i)
-      if (i > 0) total += root.rowSpacing
-      if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail)
-      previousSection = row.section
-      totals.push(total)
-    }
-
-    return foldedListHeight(totals, availableRowsHeight())
+    return foldedListHeight(root.rowTotals, availableRowsHeight())
   }
 
-  function dmenuRowListHeight(_serial, _count, _filter) {
+  function dmenuRowListHeight() {
     if (root.mode === "input") return 0
     if (displayModel.count === 0) return root.baseRowHeight
 
     var available = availableRowsHeight()
     if (root.dmenuMaxHeight > 0) available = Math.min(available, Style.space(root.dmenuMaxHeight))
 
-    var totals = []
-    var total = 0
-    for (var i = 0; i < displayModel.count; i++) {
-      if (i > 0) total += root.rowSpacing
-      total += root.rowHeightForDetail(displayModel.get(i).detail)
-      totals.push(total)
-    }
-
-    return foldedListHeight(totals, available)
+    return foldedListHeight(root.rowTotals, available)
   }
 
   function item(id) {
@@ -294,68 +286,76 @@ Item {
   //     the muted-blue set matching the palette) via its XDG Inherits chain,
   //     then hicolor/Adwaita; scalable SVGs preferred (crisp at any DPI),
   //     with 48/32/24 px PNG fallbacks; prints an absolute path or empty.
+  //
+  // Cost model (a laptop with hundreds of apps is what this runs against):
+  //   - icons: one pass over every (root x theme x size x category) dir
+  //     builds an icon_map; each app's icon is then a single table lookup
+  //     (before: up to roots x chain x 5 x 4 x 2 stat checks per app),
+  //   - .desktop parsing: one awk per file (before: three sed forks).
+  //   First map hit wins in exactly the old priority: XDG root order, then
+  //   theme chain, then size (scalable first), then category, svg before png.
   readonly property string appsScanScript: [
     'declare -A seen',
-    'icon_roots=""',
-    'IFS=":"; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do icon_roots="$icon_roots $d/icons"; done; unset IFS',
-    'icon_roots="$icon_roots ${XDG_DATA_HOME:-$HOME/.local/share}/icons"',
+    'declare -A icon_map',
+    'icon_roots=()',
+    'IFS=":"; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do icon_roots+=("$d/icons"); done; unset IFS',
+    'icon_roots+=("${XDG_DATA_HOME:-$HOME/.local/share}/icons")',
     'icon_theme=$(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null)',
     'icon_theme=${icon_theme#?}',
     'icon_theme=${icon_theme%?}',
     '[[ -n $icon_theme ]] || icon_theme=Yaru',
-    'chain=$icon_theme',
+    'chain=("$icon_theme")',
     'idx=""',
-    'for r in $icon_roots; do idx="$r/$icon_theme/index.theme"; [[ -f $idx ]] && break; done',
+    'for r in "${icon_roots[@]}"; do idx="$r/$icon_theme/index.theme"; [[ -f $idx ]] && break; done',
     'if [[ -n $idx ]]; then',
     '  inh=$(sed -n "s/^Inherits=//p" "$idx" | head -n1)',
-    '  IFS=","; for p in $inh; do [[ -n $p ]] && chain="$chain $p"; done; unset IFS',
+    '  IFS=","; for p in $inh; do [[ -n $p ]] && chain+=("$p"); done; unset IFS',
     'fi',
-    'chain="$chain hicolor Adwaita"',
-    'sizes="scalable 128x128 48x48 32x32 24x24"',
-    'cats="apps actions mimetypes places"',
-    'icon_for() {',
-    '  local name="$1" leaf r t s c f',
-    '  [[ -n $name ]] || return 0',
-    '  [[ $name == /* ]] && { [[ -f $name ]] && printf "%s" "$name"; return 0; }',
-    '  leaf="${name##*/}"',
-    '  for r in $icon_roots; do',
-    '    for t in $chain; do',
-    '      for s in $sizes; do',
-    '        for c in $cats; do',
-    '          for f in "$r/$t/$s/$c/$leaf.svg" "$r/$t/$s/$c/$leaf.png"; do',
-    '            [[ -f $f ]] && { printf "%s" "$f"; return 0; }',
-    '          done',
+    'chain+=("hicolor" "Adwaita")',
+    '# One pass over every (root x theme x size x category) dir builds the',
+    '# icon map; a first hit wins in the old priority (XDG root order, then',
+    '# theme chain, then size, then category, svg before png).',
+    'for r in "${icon_roots[@]}"; do',
+    '  for t in "${chain[@]}"; do',
+    '    for s in scalable 128x128 48x48 32x32 24x24; do',
+    '      for c in apps actions mimetypes places; do',
+    '        for f in "$r/$t/$s/$c/"*.svg "$r/$t/$s/$c/"*.png; do',
+    '          [[ -f $f ]] || continue',
+    '          key="${f##*/}"; key="${key%.*}"',
+    '          [[ -n ${icon_map[$key]+x} ]] || icon_map[$key]="$f"',
     '        done',
     '      done',
     '    done',
     '  done',
-    '  [[ $leaf == $name ]] && return 0',
-    '  for r in $icon_roots; do',
-    '    for t in $chain; do',
-    '      for s in $sizes; do',
-    '        for c in $cats; do',
-    '          for f in "$r/$t/$s/$c/$name.svg" "$r/$t/$s/$c/$name.png"; do',
-    '            [[ -f $f ]] && { printf "%s" "$f"; return 0; }',
-    '          done',
-    '        done',
-    '      done',
-    '    done',
-    '  done',
-    '  return 0',
-    '}',
-    'app_dirs=""',
-    'IFS=":"; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do app_dirs="$app_dirs $d/applications"; done; unset IFS',
-    'app_dirs="$app_dirs ${XDG_DATA_HOME:-$HOME/.local/share}/applications"',
-    'for base in $app_dirs; do',
+    'done',
+    'app_dirs=()',
+    'IFS=":"; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do app_dirs+=("$d/applications"); done; unset IFS',
+    'app_dirs+=("${XDG_DATA_HOME:-$HOME/.local/share}/applications")',
+    'for base in "${app_dirs[@]}"; do',
     '  [[ -d $base ]] || continue',
     '  while IFS= read -r -d "" f; do',
     '    id="${f##*/}"; id="${id%.desktop}"',
     '    [[ -n ${seen[$id]+x} ]] && continue; seen[$id]=1',
-    '    name=$(sed -n "s/^Name=//p" "$f" | head -n1)',
-    '    ic=$(sed -n "s/^Icon=//p" "$f" | head -n1)',
-    '    skip=$(sed -n "s/^\\(Hidden\\|NoDisplay\\)=true$/1/p; /^OnlyShowIn=/p" "$f" | head -n1)',
-    '    [[ -n $name && -z $skip ]] || continue',
-    '    printf "%s\\t%s\\t%s\\n" "$name" "$id" "$(icon_for "$ic")"',
+    '    # Name / Icon / skip-flag in a fork-free case loop (was three sed',
+    '    # forks per file). First occurrence wins, like the sed pipeline.',
+    '    name=""; ic=""; skip=0',
+    '    while IFS= read -r line || [[ -n $line ]]; do',
+    '      case $line in',
+    '        Name=*)         [[ -z $name ]] && name=${line#Name=} ;;',
+    '        Icon=*)         [[ -z $ic ]] && ic=${line#Icon=} ;;',
+    '        Hidden=true)    skip=1 ;;',
+    '        NoDisplay=true) skip=1 ;;',
+    '        OnlyShowIn=*)   skip=1 ;;',
+    '      esac',
+    '    done < "$f"',
+    '    [[ -n $name ]] || continue',
+    '    [[ $skip == 1 ]] && continue',
+    '    if [[ $ic == /* ]]; then',
+    '      [[ -f $ic ]] || ic=""',
+    '    else',
+    '      ic="${icon_map[${ic##*/}]-}"',
+    '    fi',
+    '    printf "%s\\t%s\\t%s\\n" "$name" "$id" "$ic"',
     '  done < <(find -L "$base" -maxdepth 1 -name "*.desktop" -print0 2>/dev/null)',
     'done',
     'exit 0'
@@ -602,6 +602,21 @@ Item {
     return MenuModel.isDescendantOf(root.items, id, ancestorId)
   }
 
+  // Single walk up the parent chain for one item: { depth, path, parentPath,
+  // ancestors }. The search rebuild calls this once per item and hands the
+  // result to the scorer and the row builder rather than letting each walk
+  // the chain again.
+  function ancestryFor(id) {
+    return MenuModel.ancestryFor(root.items, id)
+  }
+
+  // True when ancestorId sits on a precomputed ancestryFor() chain. Mirrors
+  // MenuModel.isDescendantOf without re-walking.
+  function ancestryIsDescendantOf(ancestry, id, ancestorId) {
+    if (ancestorId === "root") return id !== "root"
+    return ancestry.ancestors.indexOf(ancestorId) >= 0
+  }
+
   function childCount(id) {
     return MenuModel.childCount(root.items, root.itemOrder, id)
   }
@@ -642,12 +657,12 @@ Item {
     return MenuModel.matchesQuery(entry, query, root.isVisible(entry))
   }
 
-  function searchScore(entry, query) {
-    return MenuModel.searchScore(root.items, entry, query)
+  function searchScore(entry, query, ancestry) {
+    return MenuModel.searchScore(root.items, entry, query, ancestry)
   }
 
-  function displayRow(entry, detail, score, section) {
-    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, entry, detail, score, section)
+  function displayRow(entry, detail, score, section, ancestry) {
+    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, entry, detail, score, section, ancestry)
   }
 
   function rebuildDmenuDisplay() {
@@ -655,10 +670,11 @@ Item {
     root.searchDivider = false
 
     if (root.mode === "input") {
-      layoutSerial += 1
+      root.rowTotals = []
       return
     }
 
+    var rows = []
     var query = root.filterText.trim().toLowerCase()
     for (var i = 0; i < root.dmenuOptions.length; i++) {
       // An option is "<label>", "<glyph>\t<label>", or
@@ -671,7 +687,7 @@ Item {
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
           && detail.toLowerCase().indexOf(query) < 0) continue
-      displayModel.append({
+      rows.push({
         itemId: "dmenu." + i,
         kind: "dmenu",
         icon: icon,
@@ -690,7 +706,16 @@ Item {
       })
     }
 
-    layoutSerial += 1
+    var totals = []
+    var total = 0
+    for (var t = 0; t < rows.length; t++) {
+      if (t > 0) total += root.rowSpacing
+      total += root.rowHeightForDetail(rows[t].detail)
+      totals.push(total)
+    }
+    root.rowTotals = totals
+
+    for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
 
     if (displayModel.count === 0) selectedIndex = 0
     else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
@@ -701,6 +726,13 @@ Item {
     })
   }
 
+  // One lowercased+split query per rebuild. It used to be re-derived inside
+  // matchesQuery/searchScore for EVERY item on every keystroke; now it is
+  // parsed here once and handed to both.
+  function parsedFilter() {
+    return MenuModel.parseQuery(root.filterText)
+  }
+
   function rebuildDisplay() {
     if (root.dmenuActive) {
       root.rebuildDmenuDisplay()
@@ -709,12 +741,16 @@ Item {
 
     displayModel.clear()
 
-    if (!root.rowsLoaded) return
+    if (!root.rowsLoaded) {
+      root.rowTotals = []
+      return
+    }
 
     var active = root.item(root.activeMenu) ? root.activeMenu : "root"
     root.activeMenu = active
     var rows = []
     var query = root.filterText.trim()
+    var parsed = root.parsedFilter()
     root.searchDivider = false
 
     if (query) {
@@ -724,11 +760,13 @@ Item {
       for (var i = 0; i < root.itemOrder.length; i++) {
         var entry = root.item(root.itemOrder[i])
         if (!entry || entry.id === "root") continue
-        if (!root.isDescendantOf(entry.id, active)) continue
-        if (!root.matchesQuery(entry, query)) continue
+        // One parent-chain walk per item, reused for the descendant gate,
+        // the detail line, the row's path and the sort depth.
+        var anc = root.ancestryFor(entry.id)
+        if (!root.ancestryIsDescendantOf(anc, entry.id, active)) continue
+        if (!root.matchesQuery(entry, parsed)) continue
 
-        var detail = root.parentPathFor(entry.id)
-        var row = root.displayRow(entry, detail, root.searchScore(entry, query))
+        var row = root.displayRow(entry, anc.parentPath, root.searchScore(entry, parsed, anc), "", anc)
         if (entry.parent === active) currentRows.push(row)
         else drilldownRows.push(row)
       }
@@ -770,8 +808,21 @@ Item {
       }
     }
 
-    for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
-    layoutSerial += 1
+    // Running heights for the fold, built from the rows in hand. The divider
+    // (search mode) counts when the drilldown section first starts.
+    var totals = []
+    var total = 0
+    var previousSection = ""
+    for (var k = 0; k < rows.length; k++) {
+      if (k > 0) total += root.rowSpacing
+      if (rows[k].section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
+      total += root.rowHeightForDetail(rows[k].detail)
+      previousSection = rows[k].section
+      totals.push(total)
+    }
+    root.rowTotals = totals
+
+    for (var k2 = 0; k2 < rows.length; k2++) displayModel.append(rows[k2])
 
     if (displayModel.count === 0) selectedIndex = 0
     else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
@@ -1230,10 +1281,12 @@ Item {
         property real progress: 0    // linear 0..1 over duration
         property int frame: 0        // temporal noise seed
         readonly property real duration: 620
-        // Opt-out for a no-motion build. Not tied to StyleHints.reduceAnimations
-        // (not exposed by every QtQuick.Controls build, and this file doesn't
-        // import it): set true to make the card appear instantly.
-        property bool reduced: false
+        // Opt-out for a no-motion build: set OMARCHY_PIXEL_WIPE=0 in the
+        // shell's environment (e.g. via a hook or shell env) and the card
+        // appears instantly. Not tied to StyleHints.reduceAnimations (not
+        // exposed by every QtQuick.Controls build, and this file doesn't
+        // import it).
+        property bool reduced: Quickshell.env("OMARCHY_PIXEL_WIPE") === "0"
 
         // OutCubic
         function ease(p) { return 1 - Math.pow(1 - p, 3) }

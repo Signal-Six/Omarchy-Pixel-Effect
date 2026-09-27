@@ -113,10 +113,23 @@ A fork of the stock `omarchy.menu` plugin with two additions:
   shimmering lit cells rolls top→bottom over ~620 ms (OutCubic) with two twinkling
   "tail" rows above it. The panel waits for `rowsLoaded` before appearing, so the
   wipe **leads** the content instead of revealing an empty card.
-  - Opt out of motion: set `reduced: true` on the `pixelWipe` `Canvas` in `Menu.qml`
-    and the card appears instantly. (It is deliberately *not* wired to
-    `StyleHints.reduceAnimations`, which this file does not import and not every
-    build exposes.)
+  - **Opt out of motion** (instant card, no wipe): the wipe reads
+    `OMARCHY_PIXEL_WIPE`; set it to `0` and the card appears instantly. The shell
+    inherits its env from `omarchy-launch-shell`, and `~/.local/bin` precedes
+    `/usr/share/omarchy/bin` on `PATH`, so shadow the launcher with a one-line
+    wrapper:
+    ```sh
+    mkdir -p ~/.local/bin
+    cat > ~/.local/bin/omarchy-launch-shell <<'EOF'
+    #!/usr/bin/env bash
+    export OMARCHY_PIXEL_WIPE=0
+    exec /usr/share/omarchy/bin/omarchy-launch-shell "$@"
+    EOF
+    chmod +x ~/.local/bin/omarchy-launch-shell
+    ```
+    then `omarchy restart shell`. To undo, delete the wrapper. (The wipe is
+    deliberately *not* wired to `StyleHints.reduceAnimations`, which this file
+    does not import and not every build exposes.)
 - **App-list fallback with icons.** On Omarchy **4.0.4+** the host withholds
   `shell.appLibrary` from third-party `menu`-kind plugins, so a menu that relied on
   it shows an **empty Applications list**. This plugin carries a bash `.desktop`
@@ -160,7 +173,7 @@ Omarchy-Pixel-Effect/
 │   ├── shell.lock.toml        #   hyprlock colors
 │   ├── icons.theme            #   icon theme (Yaru-blue-dark)
 │   ├── backgrounds/omarchy.png
-│   ├── preview.png
+│   ├── wallpaper.png          #   the 4K theme wallpaper (theme picker preview)
 │   ├── preview-unlock.png
 │   └── unlock.png
 └── omakase-pixel.menu/        # the SUPER+SPACE menu plugin

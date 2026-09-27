@@ -34,7 +34,13 @@ function normalizeItem(id, raw) {
     provider: value.provider || "",
     aliases: aliases,
     when: value.when || "",
-    checked: value.checked || ""
+    checked: value.checked || "",
+    // Query-independent search fields, precomputed once here instead of on
+    // every keystroke: matchesQuery/searchScore used to rebuild each of
+    // these per item, per query, for the whole tree.
+    labelLower: (value.label || id).toLowerCase(),
+    searchLower: "",
+    descWords: []
   }
 }
 
@@ -83,15 +89,12 @@ function mergeMenuSources(defaultItems, userItems) {
   }
 
   if (!nextItems.root) {
-    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" }
+    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "", labelLower: "go", searchLower: "", descWords: [] }
     nextOrder.unshift("root")
   }
   for (var k3 = 0; k3 < nextOrder.length; k3++) nextItems[nextOrder[k3]].order = k3
 
-  return {
-    items: nextItems,
-    itemOrder: nextOrder
-  }
+  return annotateForSearch({ items: nextItems, itemOrder: nextOrder })
 }
 
 // Both merges below return fresh items/itemOrder objects for the caller to
@@ -129,7 +132,7 @@ function mergeAppRows(items, itemOrder, appRows) {
     nextOrder.push(row.id)
   }
 
-  return { items: nextItems, itemOrder: nextOrder }
+  return annotateForSearch({ items: nextItems, itemOrder: nextOrder })
 }
 
 // Swaps the rows one provider contributed, leaving every other item untouched.
@@ -160,7 +163,7 @@ function swapProviderRows(items, itemOrder, menuId, rows) {
     nextOrder.push(row.id)
   }
 
-  return { items: nextItems, itemOrder: nextOrder }
+  return annotateForSearch({ items: nextItems, itemOrder: nextOrder })
 }
 
 function item(items, id) {
@@ -193,52 +196,76 @@ function slugify(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"
 }
 
-function depthFor(items, id) {
-  var depth = 0
+// One walk up the parent chain, producing everything the hot path asks for:
+// depth (the non-root ancestor count depthFor used), the display path
+// (pathFor), the parent's path (parentPathFor) and the ancestor ids
+// (isDescendantOf). The search rebuild walked the same chain four times per
+// item -- descendant gate, detail line, row path and sort depth -- so the
+// walk now happens once and the result is handed to the scorer and the row
+// builder instead of each re-deriving it.
+//
+// Each field keeps the exact semantics of the function it replaces, including
+// the 32-step guard those walks used (the chain is collected one node deeper
+// so the parent path can still be the 32-node window parentPathFor re-walked
+// from the parent).
+function ancestryFor(items, id) {
+  var chain = []
   var current = item(items, id)
   var guard = 0
 
-  while (current && current.parent && current.parent !== "root" && guard < 32) {
-    depth += 1
+  while (current && current.id !== "root" && guard < 33) {
+    chain.push(current)
     current = item(items, current.parent)
     guard += 1
   }
 
-  return depth
+  var limit = chain.length > 32 ? 32 : chain.length
+  var depth = 0
+  var ancestors = []
+  var labels = []
+  var parentLabels = []
+
+  // depthFor counted a step for every parent that was neither absent nor
+  // "root"; isDescendantOf compared the same 32 nodes' parent ids.
+  for (var i = 0; i < limit; i++) {
+    if (chain[i].parent && chain[i].parent !== "root") {
+      depth += 1
+      ancestors.push(chain[i].parent)
+    }
+  }
+
+  // pathFor joined those 32 nodes root-most first; parentPathFor was
+  // pathFor(parent), the same window with the item's own label left off.
+  for (var up = limit - 1; up >= 0; up--) labels.push(chain[up].label)
+  var parentTop = chain.length - 1 > 32 ? 32 : chain.length - 1
+  for (var down = parentTop; down >= 1; down--) parentLabels.push(chain[down].label)
+
+  return {
+    depth: depth,
+    path: labels.join(" › "),
+    parentPath: parentLabels.join(" › "),
+    ancestors: ancestors
+  }
+}
+
+// Standalone shims kept for the QML wrappers and the tests; the rebuild
+// threads a precomputed ancestryFor() result instead of calling these once
+// per item.
+function depthFor(items, id) {
+  return ancestryFor(items, id).depth
 }
 
 function pathFor(items, id) {
-  var labels = []
-  var current = item(items, id)
-  var guard = 0
-
-  while (current && current.id !== "root" && guard < 32) {
-    labels.unshift(current.label)
-    current = item(items, current.parent)
-    guard += 1
-  }
-
-  return labels.join(" › ")
+  return ancestryFor(items, id).path
 }
 
 function parentPathFor(items, id) {
-  var entry = item(items, id)
-  if (!entry || !entry.parent || entry.parent === "root") return ""
-  return pathFor(items, entry.parent)
+  return ancestryFor(items, id).parentPath
 }
 
 function isDescendantOf(items, id, ancestorId) {
   if (ancestorId === "root") return id !== "root"
-
-  var current = item(items, id)
-  var guard = 0
-  while (current && current.parent && guard < 32) {
-    if (current.parent === ancestorId) return true
-    current = item(items, current.parent)
-    guard += 1
-  }
-
-  return false
+  return ancestryFor(items, id).ancestors.indexOf(ancestorId) >= 0
 }
 
 function childCount(items, itemOrder, id) {
@@ -285,12 +312,43 @@ function leafIdFor(id) {
   return parts.length > 0 ? parts[parts.length - 1] : id
 }
 
+// Parses a query the way the hot path consumes it — lowercased needle plus
+// the list of terms. Called once per rebuild (Menu.qml keeps the result in
+// root.searchQuery) instead of once per item, per keystroke.
+function parseQuery(query) {
+  var needle = String(query || "").toLowerCase().trim()
+  return { needle: needle, terms: needle.split(/\s+/) }
+}
+
 function nameSearchText(entry) {
   if (!entry) return ""
   var aliases = []
   var values = Array.isArray(entry.aliases) ? entry.aliases : []
   for (var i = 0; i < values.length; i++) aliases.push(searchableToken(values[i]))
   return [entry.label, searchableToken(leafIdFor(entry.id)), aliases.join(" ")].join(" ").toLowerCase()
+}
+
+// Precomputes every item's query-independent search fields once, so the
+// per-keystroke path (matchesQuery/searchScore) is pure comparison:
+//   labelLower  — entry.label lowercased
+//   searchLower — label + leaf id + aliases, tokenized, lowercased
+//   descWords   — description lowercased and split on whitespace
+// All of it is independent of the current query and of the checked marker
+// (labelFor appends " ✓" to the *row* label, never to entry.label), so it is
+// safe to compute at merge time and reuse until the next merge. Runs in one
+// pass over the set; idempotent, so re-annotating carried-over rows is a no-op
+// with the same values.
+function annotateForSearch(set) {
+  var items = (set && set.items) || ({})
+  var order = (set && Array.isArray(set.itemOrder)) ? set.itemOrder : Object.keys(items)
+  for (var i = 0; i < order.length; i++) {
+    var entry = items[order[i]]
+    if (!entry) continue
+    entry.labelLower = String(entry.label || entry.id || "").toLowerCase()
+    entry.searchLower = nameSearchText(entry)
+    entry.descWords = String(entry.description || "").toLowerCase().split(/\s+/)
+  }
+  return set
 }
 
 function termInSearchWords(term, text) {
@@ -301,8 +359,10 @@ function termInSearchWords(term, text) {
   return false
 }
 
+// `query` is the parseQuery() result ({needle, terms}); a raw string is
+// parsed here so older call sites keep working.
 function descriptionTextMatches(query, text) {
-  var terms = String(query || "").toLowerCase().trim().split(/\s+/)
+  var terms = (query && query.terms) ? query.terms : parseQuery(query).terms
   for (var i = 0; i < terms.length; i++) {
     if (terms[i] && !termInSearchWords(terms[i], text)) return false
   }
@@ -313,25 +373,33 @@ function matchesQuery(entry, query, visible) {
   if (!entry || entry.id === "root") return false
   if (!visible) return false
 
-  var nameText = nameSearchText(entry)
-  var descriptionText = String(entry.description || "").toLowerCase()
-  var terms = String(query || "").toLowerCase().trim().split(/\s+/)
+  // labelLower / searchLower / descWords were precomputed by
+  // annotateForSearch at merge time — this path is now comparison only.
+  // `query` is the parseQuery() result ({needle, terms}); a raw string is
+  // parsed here so older call sites keep working.
+  var nameText = entry.searchLower || nameSearchText(entry)
+  var descWords = entry.descWords || String(entry.description || "").toLowerCase().split(/\s+/)
+  var terms = (query && query.terms) ? query.terms : parseQuery(query).terms
 
   for (var i = 0; i < terms.length; i++) {
     if (!terms[i]) continue
     if (nameText.indexOf(terms[i]) >= 0) continue
-    if (termInSearchWords(terms[i], descriptionText)) continue
+    if (termInSearchWords(terms[i], descWords.join(" "))) continue
     return false
   }
 
   return true
 }
 
-function searchScore(items, entry, query) {
-  var needle = String(query || "").toLowerCase().trim()
-  var label = entry.label.toLowerCase()
-  var nameText = nameSearchText(entry)
-  var descriptionText = String(entry.description || "").toLowerCase()
+function searchScore(items, entry, query, ancestry) {
+  // `query` is the parseQuery() result ({needle, terms}); a raw string is
+  // parsed here so older call sites keep working. `ancestry` is the
+  // precomputed ancestryFor() result when the caller already walked the
+  // chain (the rebuild does); without it the depth is derived here.
+  var needle = (query && query.needle !== undefined) ? query.needle : parseQuery(query).needle
+  var label = entry.labelLower || entry.label.toLowerCase()
+  var nameText = entry.searchLower || nameSearchText(entry)
+  var descWords = entry.descWords || String(entry.description || "").toLowerCase().split(/\s+/)
   var score = 80
 
   if (label === needle) score = entry.parent === "root" ? 2 : 0
@@ -341,17 +409,17 @@ function searchScore(items, entry, query) {
   else if (label.indexOf(needle) === 0) score = 10
   else if (label.indexOf(needle) >= 0) score = 30
   else if (nameText.indexOf(needle) >= 0) score = 40
-  else if (descriptionTextMatches(needle, descriptionText)) score = 60
+  else if (descriptionTextMatches(query, descWords.join(" "))) score = 60
 
   if (entry.kind === "menu" || entry.kind === "link") score -= 2
   // App rows sort after all menu items, so they lose the tiebreak below to an
   // equal match. Outrank those, but stay inside the tier so better ones win.
   if (entry.kind === "app") score -= 5
 
-  return score * 1000 + depthFor(items, entry.id) * 25 + entry.order
+  return score * 1000 + (ancestry ? ancestry.depth : depthFor(items, entry.id)) * 25 + entry.order
 }
 
-function displayRow(items, itemOrder, checkedResults, entry, detail, score, section) {
+function displayRow(items, itemOrder, checkedResults, entry, detail, score, section, ancestry) {
   var target = entry.kind === "link" ? entry.target : entry.id
   return {
     itemId: entry.id,
@@ -364,7 +432,7 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
     label: labelFor(entry, checkedResults),
     target: target,
     detail: detail || "",
-    path: pathFor(items, entry.id),
+    path: ancestry ? ancestry.path : pathFor(items, entry.id),
     childCount: (entry.kind === "menu" || entry.kind === "link") ? childCount(items, itemOrder, target) : 0,
     action: entry.action || "",
     provider: entry.provider || "",
@@ -492,6 +560,7 @@ if (typeof module !== "undefined") {
     item: item,
     resolveRoute: resolveRoute,
     slugify: slugify,
+    ancestryFor: ancestryFor,
     depthFor: depthFor,
     pathFor: pathFor,
     parentPathFor: parentPathFor,
@@ -502,6 +571,8 @@ if (typeof module !== "undefined") {
     searchableToken: searchableToken,
     leafIdFor: leafIdFor,
     nameSearchText: nameSearchText,
+    annotateForSearch: annotateForSearch,
+    parseQuery: parseQuery,
     termInSearchWords: termInSearchWords,
     descriptionTextMatches: descriptionTextMatches,
     matchesQuery: matchesQuery,

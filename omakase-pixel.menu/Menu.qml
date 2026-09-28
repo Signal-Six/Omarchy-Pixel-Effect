@@ -1037,7 +1037,29 @@ Item {
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
-  ListModel { id: displayModel }
+  // A plain ListModel (not MenuModel) so it exposes the standard QML
+  // ListModel surface -- count, append, get, clear, roles -- that the QML in
+  // this file and the omarchy-menu-select CLI depend on.
+  //
+  // The single seed row declares the COMPLETE role set and is removed in
+  // onCompleted, so the model starts empty but keeps every role. A bare
+  // ListModel otherwise derives its role set from the FIRST row appended and
+  // locks it for the instance's lifetime -- clear() removes rows but does NOT
+  // re-derive roles. This file feeds the one model two row shapes (launcher
+  // rows from MenuModel.displayRow(), dmenu rows from rebuildDmenuDisplay)
+  // that differ by exactly `iconPath`, so without the seed the second mode to
+  // open fails `required property string iconPath` in the delegate and the
+  // panel renders empty. Declaring all roles up front makes rendering
+  // independent of row shape and open order (SUPER+SPACE vs SUPER+K).
+  ListModel {
+    id: displayModel
+    ListElement {
+      itemId: ""; kind: ""; icon: ""; iconFont: ""; appIcon: ""
+      iconPath: ""; appId: ""; label: ""; target: ""; detail: ""
+      path: ""; action: ""; provider: ""; score: 0; childCount: 0; section: ""
+    }
+    Component.onCompleted: displayModel.clear()
+  }
 
   // ----------------------------------------------------------- route surface
   //

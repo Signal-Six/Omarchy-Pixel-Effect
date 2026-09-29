@@ -172,8 +172,11 @@ Omarchy-Pixel-Effect/
 │   ├── pixel_palette.toml     #   derived 6-color FX ladder
 │   ├── shell.lock.toml        #   hyprlock colors
 │   ├── icons.theme            #   icon theme (Yaru-blue-dark)
-│   ├── backgrounds/omarchy.png
-│   ├── wallpaper.png          #   the 4K theme wallpaper (theme picker preview)
+│   ├── backgrounds/wallpaper2.png #  4K wordmark wallpaper (light→blue gradient)
+│   ├── backgrounds/wallpaper3.png #  4K symbol wallpaper (same gradient + glow)
+│   ├── wallpaper.png          #   theme-picker wallpaper (original, flat)
+│   ├── preview.png            #   theme-picker preview (wordmark, gradient)
+│   ├── preview-symbol.png     #   theme-picker preview (symbol, gradient)
 │   ├── preview-unlock.png
 │   └── unlock.png
 └── omakase-pixel.menu/        # the SUPER+SPACE menu plugin

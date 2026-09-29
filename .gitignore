@@ -30,6 +30,9 @@
 # The SUPER+SPACE menu plugin (same: re-include the dir, walk the subtree).
 !/omakase-pixel.menu
 
+# The lock-screen plugin (band-only pixel border; same whitelist rule).
+!/omakase-pixel.lock
+
 # --- keep the tree clean regardless --------------------------------
 .DS_Store
 *.swp

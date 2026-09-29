@@ -10,12 +10,13 @@ from behind a leading row of shimmering pixels that rolls top-to-bottom over
 ~620 ms with two twinkling "tail" rows above it — the same value-noise family as
 the pixel field on [omarchy.org](https://omarchy.org/).
 
-This repo ships exactly two things, and nothing else:
+This repo ships exactly three things, and nothing else:
 
 | Directory              | What it is                                                                 |
 | ---------------------- | -------------------------------------------------------------------------- |
 | `omakase-pixel/`       | The **palette theme** — `colors.toml` (25-key source of truth), the derived 6-color `pixel_palette.toml` the FX read, `shell.lock.toml` (hyprlock colors), `icons.theme`, a 4K wallpaper, and previews. |
 | `omakase-pixel.menu/`  | The **SUPER+SPACE menu plugin** (a Quickshell `menu` + `bar-widget`) with the pixel wipe and the app-list fallback. |
+| `omakase-pixel.lock/`  | The **lock-screen plugin** (a Quickshell `service`, `clonedFrom: omarchy.lock`) with the shimmering pixel border around the screen edge. `Service.qml` is a byte-identical copy of stock — auth logic untouched; only `LockView.qml` gains the border. |
 
 The Pixel Fade effect works on any theme but it was specifically built around the color palette of the included omakase-pixel theme.
 
@@ -62,10 +63,11 @@ Press **SUPER + SPACE**. The card should reveal with the pixel wipe.
 ### Options
 
 ```sh
-./install.sh             # theme + menu (default)
+./install.sh             # theme + menu + lock (default)
 ./install.sh --theme     # palette theme only
 ./install.sh --plugin    # SUPER+SPACE menu only
-./install.sh --uninstall # remove both, restore the previous shell.json
+./install.sh --lock      # lock screen only
+./install.sh --uninstall # remove all three, restore the previous shell.json
 ./install.sh --no-restart# skip the final shell restart
 ./install.sh --help
 ```

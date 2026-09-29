@@ -27,14 +27,17 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 THEME_SRC="$REPO_DIR/omakase-pixel"
 PLUGIN_SRC="$REPO_DIR/omakase-pixel.menu"
+LOCK_SRC="$REPO_DIR/omakase-pixel.lock"
 
 THEME_NAME="omakase-pixel"
 PLUGIN_ID="omakase-pixel.menu"
+LOCK_ID="omakase-pixel.lock"
 
 THEMES_DIR="$HOME/.config/omarchy/themes"
-THEME_DST="$THEMES_DIR/$THEME_NAME"
 PLUGINS_DIR="$HOME/.config/omarchy/plugins"
+THEME_DST="$THEMES_DIR/$THEME_NAME"
 PLUGIN_DST="$PLUGINS_DIR/$PLUGIN_ID"
+LOCK_DST="$PLUGINS_DIR/$LOCK_ID"
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
 SHELL_BACKUP="$SHELL_JSON.omakase-pixel.bak"
 
@@ -45,6 +48,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 DO_THEME=1
 DO_PLUGIN=1
+DO_LOCK=1
 DO_UNINSTALL=0
 RESTART_SHELL=1
 
@@ -55,7 +59,8 @@ Usage: install.sh [options]
   (no option)     Install the palette theme AND the SUPER+SPACE menu.
   --theme         Install only the omakase-pixel palette theme.
   --plugin        Install only the omakase-pixel.menu SUPER+SPACE menu.
-  --uninstall     Remove the theme + menu and restore the previous shell.json.
+  --lock          Install only the omakase-pixel.lock screen (pixel border).
+  --uninstall     Remove the theme + menu + lock and restore the previous shell.json.
   --no-restart    Do not restart the omarchy shell at the end.
   -h, --help      Show this help.
 
@@ -66,8 +71,9 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --theme)      DO_THEME=1; DO_PLUGIN=0 ;;
-    --plugin)     DO_THEME=0; DO_PLUGIN=1 ;;
+    --theme)      DO_THEME=1; DO_PLUGIN=0; DO_LOCK=0 ;;
+    --plugin)     DO_THEME=0; DO_PLUGIN=1; DO_LOCK=0 ;;
+    --lock)       DO_THEME=0; DO_PLUGIN=0; DO_LOCK=1 ;;
     --uninstall)  DO_UNINSTALL=1 ;;
     --no-restart) RESTART_SHELL=0 ;;
     -h|--help)    usage; exit 0 ;;
@@ -172,8 +178,67 @@ install_plugin() {
   say "bar left now: $left"
 }
 
+# Copy the lock plugin into the user plugins dir and mark the stock lock
+# disabled, so the shell swaps to ours on the next restart. Unlike the menu
+# swap this does NOT replace a bar entry: omarchy.lock is a service-kind
+# plugin, and PluginRegistry.setPluginEnabled (via `omarchy plugin enable`)
+# auto-disables a clone's clonedFrom source — which is exactly what this
+# shell.json patch does by hand so the reversal is a clean uninstall.
+# keepLoaded lock services survive `rescanPlugins` (by design, so the lock
+# isn't dropped mid-session), which means the swap takes effect on the next
+# shell START — we restart the shell at the end of install.
+install_lock() {
+  [ -d "$LOCK_SRC" ] || die "omakase-pixel.lock/ is missing from this checkout"
+  [ -f "$LOCK_SRC/manifest.json" ] || die "omakase-pixel.lock/manifest.json is missing"
+
+  mkdir -p "$PLUGINS_DIR"
+
+  [ -f "$LOCK_DST/.installed-by-omarchy-pixel-effect" ] && rm -rf "$LOCK_DST"
+  if [ -e "$LOCK_DST" ]; then
+    local displaced="$LOCK_DST.displaced.$(date +%s)"
+    say "a plugin already lives at $LOCK_DST — moving it to $(basename "$displaced")"
+    mv "$LOCK_DST" "$displaced"
+  fi
+
+  say "installing the '$LOCK_ID' lock plugin -> $LOCK_DST"
+  cp -a "$LOCK_SRC" "$LOCK_DST"
+  touch "$LOCK_DST/.installed-by-omarchy-pixel-effect"
+
+  [ -f "$SHELL_JSON" ] || die "shell.json not found at $SHELL_JSON"
+
+  if [ -f "$SHELL_BACKUP" ]; then
+    say "keeping the original shell.json snapshot from the first install"
+  else
+    cp -a "$SHELL_JSON" "$SHELL_BACKUP"
+    say "backed up shell.json -> $(basename "$SHELL_BACKUP")"
+  fi
+
+  # Disable the stock lock so ours (clonedFrom omarchy.lock) takes over;
+  # make sure our own id is never in disabledPlugins. `(. // [])` because a
+  # fresh shell.json has no disabledPlugins key at all.
+  local filter
+  filter='
+    .disabledPlugins |= (
+      ((. // []) | . + ["omarchy.lock"] | unique)
+      | map(select(. != "omakase-pixel.lock"))
+    )
+  '
+
+  say "patching shell.json (disabledPlugins: +omarchy.lock)"
+  jq "$filter" "$SHELL_JSON" > "$SHELL_JSON.tmp"
+  jq -e . "$SHELL_JSON.tmp" >/dev/null || die "jq produced invalid shell.json — aborting (original untouched)"
+  mv "$SHELL_JSON.tmp" "$SHELL_JSON"
+}
+
 restart_shell() {
   [ "$RESTART_SHELL" -eq 1 ] || return 0
+  if [ "$DO_LOCK" -eq 1 ]; then
+    # keepLoaded lock services survive rescanPlugins by design, so ONLY a
+    # real shell restart swaps the lock. Rescan is not enough here.
+    say "restarting the omarchy shell to swap in the new lock (brief bar flicker)"
+    omarchy restart shell || warn "could not restart the shell — run: omarchy restart shell"
+    return 0
+  fi
   say "restarting the omarchy shell to pick up the new plugin (brief bar flicker)"
   # A plugin rescan is enough for most; a full restart is the reliable fallback.
   if omarchy-shell shell rescanPlugins >/dev/null 2>&1; then
@@ -200,6 +265,19 @@ uninstall() {
     touched=1
   fi
 
+  if [ -e "$LOCK_DST/.installed-by-omarchy-pixel-effect" ] || [ -d "$LOCK_DST" ]; then
+    say "removing the '$LOCK_ID' lock plugin"
+    rm -rf "$LOCK_DST"
+    local displaced
+    for displaced in "$LOCK_DST".displaced.*; do
+      [ -e "$displaced" ] || continue
+      say "restoring displaced plugin $(basename "$displaced") -> $LOCK_DST"
+      mv "$displaced" "$LOCK_DST"
+      break
+    done
+    touched=1
+  fi
+
   # Revert shell.json to the pre-install snapshot when we have one.
   if [ -f "$SHELL_BACKUP" ]; then
     say "restoring shell.json from $(basename "$SHELL_BACKUP")"
@@ -207,14 +285,11 @@ uninstall() {
     rm -f "$SHELL_BACKUP"
     touched=1
   elif [ -f "$SHELL_JSON" ]; then
-    warn "no shell.json snapshot found; removing our bar entry + re-enabling the stock menu"
+    warn "no shell.json snapshot found; removing our entries + re-enabling the stock menu + lock"
     jq '
       .bar.layout.left |= map(select(.id != "omakase-pixel.menu"))
-      | .disabledPlugins |= map(select(. != "omakase-pixel.menu"))
+      | .disabledPlugins |= ((. // []) | map(select(. != "omakase-pixel.menu" and . != "omakase-pixel.lock" and . != "omarchy.menu" and . != "omarchy.lock")))
     ' "$SHELL_JSON" > "$SHELL_JSON.tmp" && mv "$SHELL_JSON.tmp" "$SHELL_JSON"
-    # Re-enable the first-party menu so the bar has a working slot again.
-    jq '.disabledPlugins |= (. - ["omarchy.menu"])' "$SHELL_JSON" > "$SHELL_JSON.tmp" \
-      && mv "$SHELL_JSON.tmp" "$SHELL_JSON"
     touched=1
   fi
 
@@ -252,9 +327,17 @@ if [ "$DO_THEME" -eq 1 ]; then
 fi
 if [ "$DO_PLUGIN" -eq 1 ]; then
   install_plugin
+fi
+if [ "$DO_LOCK" -eq 1 ]; then
+  install_lock
+fi
+if [ "$DO_PLUGIN" -eq 1 ] || [ "$DO_LOCK" -eq 1 ]; then
   restart_shell
 fi
 say "done."
 if [ "$DO_PLUGIN" -eq 1 ]; then
   say "press SUPER+SPACE — the menu card should reveal with the pixel wipe."
+fi
+if [ "$DO_LOCK" -eq 1 ]; then
+  say "lock the screen — the border should animate in (omarchy system lock)."
 fi

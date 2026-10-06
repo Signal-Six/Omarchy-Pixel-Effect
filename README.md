@@ -10,6 +10,12 @@ from behind a leading row of shimmering pixels that rolls top-to-bottom over
 ~620 ms with two twinkling "tail" rows above it — the same value-noise family as
 the pixel field on [omarchy.org](https://omarchy.org/).
 
+## Preview
+
+| Desktop | Wallpaper — wordmark | Wallpaper — symbol |
+| :---: | :---: | :---: |
+| ![](omakase-pixel/preview-desktop.png) | ![](omakase-pixel/backgrounds/wallpaper2.png) | ![](omakase-pixel/backgrounds/wallpaper3.png) |
+
 This repo ships exactly three things, and nothing else:
 
 | Directory              | What it is                                                                 |
@@ -179,13 +185,18 @@ Omarchy-Pixel-Effect/
 │   ├── wallpaper.png          #   theme-picker wallpaper (original, flat)
 │   ├── preview.png            #   theme-picker preview (wordmark, gradient)
 │   ├── preview-symbol.png     #   theme-picker preview (symbol, gradient)
+│   ├── preview-desktop.png    #   4K desktop screenshot (README preview)
 │   ├── preview-unlock.png
 │   └── unlock.png
-└── omakase-pixel.menu/        # the SUPER+SPACE menu plugin
-    ├── manifest.json          #   id: omakase-pixel.menu, clonedFrom: omarchy.menu
-    ├── Menu.qml               #   the wipe Canvas + card + app fallback
-    ├── MenuModel.js           #   JSONC parsing, search, guard batching
-    └── BarWidget.qml          #   the bar's menu button
+├── omakase-pixel.menu/        # the SUPER+SPACE menu plugin
+│   ├── manifest.json          #   id: omakase-pixel.menu, clonedFrom: omarchy.menu
+│   ├── Menu.qml               #   the wipe Canvas + card + app fallback
+│   ├── MenuModel.js           #   JSONC parsing, search, guard batching
+│   └── BarWidget.qml          #   the bar's menu button
+└── omakase-pixel.lock/        # the lock-screen plugin (pixel border)
+    ├── manifest.json          #   id: omakase-pixel.lock, clonedFrom: omarchy.lock
+    ├── Service.qml            #   stock service (auth untouched)
+    └── LockView.qml           #   stock lock view + shimmering pixel border
 ```
 ---
 

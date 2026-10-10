@@ -205,8 +205,8 @@ Omarchy-Pixel-Effect/
 - **Change colors.** Edit `omakase-pixel/colors.toml` (the 25-key source of truth),
   then regenerate the 6-color ladder `pixel_palette.toml` to keep the FX in sync,
   and re-apply: `omarchy theme set omakase-pixel`. The wipe always reads the
-  theme's `Color.menu.background` / `Color.menu.text`, so recoloring the theme
-  recolors the wipe for free.
+  theme's `Commons.Color.menu.background` / `Commons.Color.menu.text`, so
+  recoloring the theme recolors the wipe for free.
 - **Menu speed / cell size.** In `omakase-pixel.menu/Menu.qml`, the `pixelWipe`
   `Canvas` carries `duration` (ms), the cell size `cs`, and `reduced`.
 - **Menu items.** The menu reads the stock JSONC at
@@ -222,6 +222,7 @@ Omarchy-Pixel-Effect/
 | Some apps show no icon | Their icon file is genuinely missing from your icon theme; they render iconless by design. |
 | Menu didn't pick up my shell.json edits | `shell.json` hot-reloads, but the *plugin swap* needs a shell restart: `omarchy restart shell`. |
 | `jq` not found | `sudo pacman -S jq`. |
+| Menu opens black / empty over a frozen screen | Qt 6.12 ships a built-in `Color` singleton in QtQuick that shadows the shell's palette. This suite qualifies all palette reads as `Commons.Color.*` (see `import qs.Commons as Commons`); re-run `install.sh` if an old copy is installed. |
 
 ---
 
